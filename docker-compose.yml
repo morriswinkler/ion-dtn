@@ -1,20 +1,26 @@
 version: '3'
 services:
-  node11:
+  node-1:
     build: .
     image: ion-dtn:latest
-    entrypoint: [ "ionstart" , "-I", "config/host1.rc"]
+    volumes:
+      - $PWD/docker_resources:/resources:ro
+    command: /resources/entrypoint.sh
     networks:
-      ion_net:
-        ipv4_address: 10.1.1.1
-
-  node2:
-    build: .
-    image: ion-dtn:latest
-    entrypoint: [ "ionstart" , "-I", "config/host2.rc"]
-    networks:
+      default:
       ion_net:
         ipv4_address: 10.1.1.2
+
+  node-2:
+    build: .
+    image: ion-dtn:latest
+    volumes:
+      - $PWD/docker_resources:/resources:ro
+    command: /resources/entrypoint.sh
+    networks:
+      default:
+      ion_net:
+        ipv4_address: 10.1.1.3
 
 networks:
   ion_net:
