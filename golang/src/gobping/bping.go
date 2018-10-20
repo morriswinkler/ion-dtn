@@ -4,6 +4,10 @@ package main
 // #include <bp.h>
 // #include <platform.h>
 // #include <zco.h>
+// #include <sdrxn.h>
+// #include <sdrmgt.h>
+// #include <sdrstring.h>
+// #include <sdrtable.h>
 //
 // vast min(vast x, vast y) {
 //	(x < y) ? x : y;
@@ -20,6 +24,9 @@ import (
 
 var (
 	sEid      = flag.String("seid", "", "source eid")
+	dEid      = flag.String("deid", "", "destination EID")
+	ttl       = flag.Int("ttl", 3600, "TTL")
+	priority  = flag.String("priority", "0", "priority")
 	verbosity bool
 )
 
@@ -146,6 +153,43 @@ OuterLoop:
 	C.free(unsafe.Pointer(cBuffer))
 }
 
+func BpSendRequest(payload string, xmitsap C.BpSAP, recvsap C.BpSAP, safeSdr *SafeSdr, w *Watch) {
+	close := w.Add()
+
+OuterLoop:
+	for {
+		select {
+			case <-close:
+				break OuterLoop
+
+			default:
+				safeSdr.mu.Lock()
+
+				//C.bp_interrupt(recvsap)
+
+				pchar := (*C.uchar)(unsafe.Pointer(priority))
+				pint := (*C.int)(unsafe.Pointer(priority))
+				cBuffer := C.CString(string(payload))
+				bundleMessage := C.Sdr_malloc(cBuffer, 0, safeSdr.sdr, C.ulong(len(payload)))
+				bundleZco := C.ionCreateZco(C.ZcoSdrSource, bundleMessage, 0, C.longlong(len(payload)), *pchar, 0, C.ZcoOutbound, nil)
+
+
+				if(bundleZco == 0) {
+					//C.bp_interrupt(recvsap)
+					w.close <- true
+				}
+
+				if(C.bp_send(xmitsap, C.CString(*dEid), nil, C.int(*ttl), *pint, 0, 0, 0, nil, bundleZco, nil) <= 0) {
+					//C.bp_interrupt(recvsap)
+					w.close <- true
+				}
+
+				safeSdr.mu.Unlock()
+				w.close <- true
+		}
+	}
+}
+
 func main() {
 
 	flag.Parse()
@@ -176,6 +220,7 @@ func main() {
 	safeSdr.sdr = C.bp_get_sdr()
 
 	go BpReceiveResponse(recvsap, &safeSdr, w)
+	go BpSendRequest("blah", xmitsap, recvsap, &safeSdr, w)
 
 	w.Start()
 
