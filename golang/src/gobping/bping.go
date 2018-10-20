@@ -99,6 +99,7 @@ func BpReceiveResponse(recvsap C.BpSAP, safeSdr *SafeSdr, w *Watch) {
 
 	var cBuffer *C.char
 
+OuterLoop:
 	for {
 		if int(C.bp_receive(recvsap, &dlv, C.BP_BLOCKING)) >= 0 {
 			received <- true
@@ -106,8 +107,7 @@ func BpReceiveResponse(recvsap C.BpSAP, safeSdr *SafeSdr, w *Watch) {
 
 		select {
 		case <-close:
-			close <- true
-			continue
+			break OuterLoop
 
 		case <-received:
 			//now := time.Now()
