@@ -1,7 +1,13 @@
 package main
 
-// #cgo LDFLAGS: -lbp
+// #cgo LDFLAGS: -lbp -lici
 // #include <bp.h>
+// #include <platform.h>
+// #include <zco.h>
+//
+// vast min(vast x, vast y) {
+//	(x < y) ? x : y;
+// }
 import "C"
 
 import (
@@ -9,7 +15,6 @@ import (
 	"flag"
 	"fmt"
 	"sync"
-	"time"
 	"unsafe"
 )
 
@@ -24,16 +29,16 @@ type SafeSdr struct {
 }
 
 type Watch struct {
-	wg sync.WaitGroup
+	wg      sync.WaitGroup
 	toClose []chan bool
-	close chan bool
+	close   chan bool
 }
 
 func NewWatch() *Watch {
 	return &Watch{}
 }
 
-func (w *Watch) Add() chan bool{
+func (w *Watch) Add() chan bool {
 	w.wg.Add(1)
 	c := make(chan bool)
 	w.toClose = append(w.toClose, c)
@@ -43,7 +48,7 @@ func (w *Watch) Add() chan bool{
 func (w *Watch) Start() {
 	for {
 		select {
-			case <- w.close;
+		case <-w.close:
 			for i := range w.toClose {
 				w.toClose[i] <- true
 			}
@@ -83,20 +88,28 @@ func BpDetach() {
 
 const BPING_PAYLOAD_MAX_LEN = 65537
 
-func BpReceiveResponse(recvsap C.BpSAP, safeSdr *SafeSdr, w *Watch ) {
+func BpReceiveResponse(recvsap C.BpSAP, safeSdr *SafeSdr, w *Watch) {
 
 	close := w.Add()
+	received := make(chan bool)
 
 	var dlv C.BpDelivery
 	var reader C.ZcoReader
-	var buffer [BPING_PAYLOAD_MAX_LEN]C.Char
+	var buffer = make([]byte, BPING_PAYLOAD_MAX_LEN)
+
+	var cBuffer *C.char
+
 	for {
+		if int(C.bp_receive(recvsap, &dlv, C.BP_BLOCKING)) >= 0 {
+			received <- true
+		}
+
 		select {
 		case <-close:
 			close <- true
 			continue
 
-		case C.bp_receive(recvsap, &dlv, C.BP_BLOCKING) >= 0:
+		case <-received:
 			//now := time.Now()
 
 			if dlv.result == C.BpReceptionInterrupted || dlv.adu == 0 {
@@ -118,17 +131,19 @@ func BpReceiveResponse(recvsap C.BpSAP, safeSdr *SafeSdr, w *Watch ) {
 			safeSdr.mu.Lock()
 
 			contentLength := C.zco_source_data_length(safeSdr.sdr, dlv.adu)
-			bytesToRead := C.MIN(contentLength, C.sizeof(buffer)-1)
+			bytesToRead := C.min(contentLength, C.longlong(len(buffer)-1))
 			C.zco_start_receiving(dlv.adu, &reader)
-			C.oK(C.sdr_begin_xn(safeSdr.sdr))
-			_ = C.zco_receive_source(safeSdr.sdr, &reader, bytesToRead, buffer)
+			_ = int(C.sdr_begin_xn(safeSdr.sdr))
+			cBuffer = C.CString(string(buffer))
+			_ = C.zco_receive_source(safeSdr.sdr, &reader, bytesToRead, cBuffer)
 			C.bp_release_delivery(&dlv, 1)
 
 			safeSdr.mu.Unlock()
 
-			fmt.Println(buffer)
+			fmt.Println(C.GoString(cBuffer))
 		}
 	}
+	C.free(unsafe.Pointer(cBuffer))
 }
 
 func main() {
@@ -158,11 +173,11 @@ func main() {
 		panic(err)
 	}
 
-	safeSdr = C.bp_get_sdr()
+	safeSdr.sdr = C.bp_get_sdr()
 
 	go BpReceiveResponse(recvsap, &safeSdr, w)
 
-	go w.Start()
+	w.Start()
 
 	C.bp_close(xmitsap)
 	C.bp_close(recvsap)
