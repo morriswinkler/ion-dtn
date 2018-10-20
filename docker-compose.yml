@@ -4,8 +4,8 @@ services:
     build: .
     image: ion-dtn:latest
     volumes:
-      - $PWD/docker_resources:/resources:ro
       - $PWD/configs/spaceapps:/tmp/configs:ro
+      - $PWD/golang:/root/go
     command: |
       bash -c "ln -s /dev/stdout ion.log & ionstart -I /tmp/configs/tcp.1.rc & tail -f /dev/null & wait"
     networks:
