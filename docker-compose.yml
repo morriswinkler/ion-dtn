@@ -1,0 +1,25 @@
+version: '3'
+services:
+  node11:
+    build: .
+    image: ion-dtn:latest
+    entrypoint: [ "ionstart" , "-I", "config/host1.rc"]
+    networks:
+      ion_net:
+        ipv4_address: 10.1.1.1
+
+  node2:
+    build: .
+    image: ion-dtn:latest
+    entrypoint: [ "ionstart" , "-I", "config/host2.rc"]
+    networks:
+      ion_net:
+        ipv4_address: 10.1.1.2
+
+networks:
+  ion_net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+      - subnet: 10.1.1.0/24

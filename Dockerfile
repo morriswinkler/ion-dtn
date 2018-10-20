@@ -11,7 +11,9 @@ COPY . .
 
 RUN ./configure --prefix=/usr/local \
     && make \
-    && make install
+    && make install \
+    && echo /usr/local/lib > /etc/ld.so.conf.d/local.conf \
+    && ldconfig
 
 WORKDIR /ion
 RUN cp -fr /usr/local/src/ion/configs/2node-stcp config
