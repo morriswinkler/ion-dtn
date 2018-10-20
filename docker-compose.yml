@@ -5,7 +5,9 @@ services:
     image: ion-dtn:latest
     volumes:
       - $PWD/docker_resources:/resources:ro
-    command: /resources/entrypoint.sh
+      - $PWD/configs/spaceapps:/tmp/configs:ro
+    command: |
+      bash -c "ln -s /dev/stdout ion.log & ionstart -I /tmp/configs/tcp.1.rc & tail -f /dev/null & wait"
     networks:
       default:
       ion_net:
@@ -16,7 +18,9 @@ services:
     image: ion-dtn:latest
     volumes:
       - $PWD/docker_resources:/resources:ro
-    command: /resources/entrypoint.sh
+      - $PWD/configs/spaceapps:/tmp/configs:ro
+    command: |
+      bash -c "ln -s /dev/stdout ion.log & ionstart -I /tmp/configs/tcp.2.rc & tail -f /dev/null & wait"
     networks:
       default:
       ion_net:
