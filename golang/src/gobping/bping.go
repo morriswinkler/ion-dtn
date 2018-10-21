@@ -202,9 +202,6 @@ func BpSendRequest(payload string, xmitsap C.BpSAP, recvsap C.BpSAP, safeSdr *Sa
 
 			fmt.Println("BpSendRequest lock")
 
-			//pchar := (*C.uchar)(unsafe.Pointer(priority))
-			//pint := (*C.int)(unsafe.Pointer(priority))
-
 			var pchar2 C.uchar = 0
 			var pint2 C.int = 0
 			cBuffer := C.CString(string(payload))

@@ -23,6 +23,15 @@ RUN wget --no-check-certificate https://dl.google.com/go/go1.11.1.linux-amd64.ta
     && tar -xvzf go1.11.1.linux-amd64.tar.gz \
     && echo "export PATH=$PATH:/usr/local/go/bin:~/go/bin" >> /etc/bash.bashrc
 
+ENV PATH=$PATH:/usr/local/go/bin:~/go/bin
+WORKDIR /root
+COPY golang/src/echo/main.go /root/go/src/echo/main.go
+RUN mkdir -p /root/go/src/github.com/libp2p/go-libp2p-examples \
+    && cd /root/go/src/github.com/libp2p/go-libp2p-examples \
+    && git clone --depth=1 https://github.com/libp2p/go-libp2p-examples . \
+    && bash -c "make deps" \
+    && bash -c "go build -o /root/echo /root/go/src/echo/main.go"
+
 # config
 WORKDIR /ion
 RUN cp -fr /usr/local/src/ion/configs/2node-stcp config
