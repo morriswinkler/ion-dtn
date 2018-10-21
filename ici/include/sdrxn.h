@@ -259,7 +259,7 @@ extern Address		sdr_address(Sdr sdr, void *pointer);
 #define sdr_write(sdr, into, from, size) \
 Sdr_write(__FILE__, __LINE__, sdr, into, from, size)
 extern void		Sdr_write(const char *file, int line,
-				Sdr sdr, Address into, char *from, size_t size);
+                  Sdr sdr, Address into, char *from, size_t size);
 
 #define sdr_poke(sdr, address, variable) \
 Sdr_write(__FILE__, __LINE__, sdr, address, \

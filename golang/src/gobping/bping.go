@@ -18,16 +18,22 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
+	"time"
 	"unsafe"
 )
 
 var (
-	sEid      = flag.String("seid", "", "source eid")
-	dEid      = flag.String("deid", "", "destination EID")
+	sEid      = flag.String("seid", "ipn:1.1", "source eid")
+	dEid      = flag.String("deid", "ipn:2.1", "destination EID")
 	ttl       = flag.Int("ttl", 3600, "TTL")
-	priority  = flag.String("priority", "0", "priority")
+	priority  = flag.String("priority", "3", "priority")
 	verbosity bool
+
+	watcher = NewWatch()
 )
 
 type SafeSdr struct {
@@ -42,7 +48,7 @@ type Watch struct {
 }
 
 func NewWatch() *Watch {
-	return &Watch{}
+	return &Watch{close: make(chan bool)}
 }
 
 func (w *Watch) Add() chan bool {
@@ -53,19 +59,28 @@ func (w *Watch) Add() chan bool {
 }
 
 func (w *Watch) Start() {
-	for {
-		select {
-		case <-w.close:
-			for i := range w.toClose {
-				w.toClose[i] <- true
-			}
-			w.wg.Wait()
-		}
+	<-w.close
+	for i := range w.toClose {
+		fmt.Printf("close gopher %d \n", i)
+		w.toClose[i] <- true
 	}
+	fmt.Println("close gopher wait")
+	w.wg.Wait()
+	fmt.Println("close gopher wait done")
 }
 
 func init() {
 	flag.BoolVar(&verbosity, "v", false, "enable verbosity")
+
+	c := make(chan os.Signal)
+
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
+	go func() {
+		sig := <-c
+		fmt.Println()
+		fmt.Println(sig)
+		watcher.close <- true
+	}()
 }
 
 func BpAttach() error {
@@ -97,7 +112,9 @@ const BPING_PAYLOAD_MAX_LEN = 65537
 
 func BpReceiveResponse(recvsap C.BpSAP, safeSdr *SafeSdr, w *Watch) {
 
-	close := w.Add()
+	defer w.wg.Done()
+	watchChan := w.Add()
+
 	received := make(chan bool)
 
 	var dlv C.BpDelivery
@@ -105,18 +122,29 @@ func BpReceiveResponse(recvsap C.BpSAP, safeSdr *SafeSdr, w *Watch) {
 	var buffer = make([]byte, BPING_PAYLOAD_MAX_LEN)
 
 	var cBuffer *C.char
+	defer func() {
+		C.free(unsafe.Pointer(cBuffer))
+	}()
 
-OuterLoop:
-	for {
-		if int(C.bp_receive(recvsap, &dlv, C.BP_BLOCKING)) >= 0 {
-			received <- true
+	go func() {
+		for {
+			if int(C.bp_receive(recvsap, &dlv, C.BP_BLOCKING)) >= 0 {
+				received <- true
+			}
 		}
+	}()
 
+	for {
+		fmt.Println("BpReceiveResponse")
 		select {
-		case <-close:
-			break OuterLoop
+		case <-watchChan:
+			fmt.Println("close BpReceiveResponse")
+			C.bp_release_delivery(&dlv, 1)
+			return
 
 		case <-received:
+			fmt.Println("Received ....")
+
 			//now := time.Now()
 
 			if dlv.result == C.BpReceptionInterrupted || dlv.adu == 0 {
@@ -149,43 +177,75 @@ OuterLoop:
 
 			fmt.Println(C.GoString(cBuffer))
 		}
+
 	}
-	C.free(unsafe.Pointer(cBuffer))
 }
 
 func BpSendRequest(payload string, xmitsap C.BpSAP, recvsap C.BpSAP, safeSdr *SafeSdr, w *Watch) {
-	close := w.Add()
+	defer w.wg.Done()
+	watchChan := w.Add()
 
-OuterLoop:
+	defer C.bp_interrupt(recvsap)
+
+	ticker := time.NewTicker(time.Second)
+
 	for {
+		fmt.Println("BpSendRequest")
 		select {
-			case <-close:
-				break OuterLoop
+		case <-watchChan:
+			fmt.Println("close BpSendRequest")
+			return
+		case <-ticker.C:
+			fmt.Println("BpSendRequest default")
 
-			default:
-				safeSdr.mu.Lock()
+			safeSdr.mu.Lock()
 
-				//C.bp_interrupt(recvsap)
+			fmt.Println("BpSendRequest lock")
 
-				pchar := (*C.uchar)(unsafe.Pointer(priority))
-				pint := (*C.int)(unsafe.Pointer(priority))
-				cBuffer := C.CString(string(payload))
-				bundleMessage := C.Sdr_malloc(cBuffer, 0, safeSdr.sdr, C.ulong(len(payload)))
-				bundleZco := C.ionCreateZco(C.ZcoSdrSource, bundleMessage, 0, C.longlong(len(payload)), *pchar, 0, C.ZcoOutbound, nil)
+			//pchar := (*C.uchar)(unsafe.Pointer(priority))
+			//pint := (*C.int)(unsafe.Pointer(priority))
 
+			var pchar2 C.uchar = 0
+			var pint2 C.int = 0
+			cBuffer := C.CString(string(payload))
 
-				if(bundleZco == 0) {
-					//C.bp_interrupt(recvsap)
-					w.close <- true
-				}
+			fmt.Println("BpSendRequest sdr_begin_xn before")
 
-				if(C.bp_send(xmitsap, C.CString(*dEid), nil, C.int(*ttl), *pint, 0, 0, 0, nil, bundleZco, nil) <= 0) {
-					//C.bp_interrupt(recvsap)
-					w.close <- true
-				}
-
-				safeSdr.mu.Unlock()
+			r := int(C.sdr_begin_xn(safeSdr.sdr))
+			if r <= 0 {
+				fmt.Printf("sdr_begin_xn returned: %d\n", r)
 				w.close <- true
+			}
+
+			fmt.Println("BpSendRequest sdr_begin_xn after ")
+
+			bundleMessage := C.Sdr_malloc(cBuffer, 0, safeSdr.sdr, C.ulong(len(payload)))
+
+			if bundleMessage != 0 {
+				C.Sdr_write(cBuffer, 0, safeSdr.sdr, bundleMessage, cBuffer, C.ulong(len(payload)))
+			}
+
+			r = int(C.sdr_end_xn(safeSdr.sdr))
+			if r > 1 {
+				fmt.Printf("sdr_end_xn returned: %d\n", r)
+				w.close <- true
+			}
+
+			fmt.Println("BpSendRequest center")
+
+			bundleZco := C.ionCreateZco(C.ZcoSdrSource, bundleMessage, 0, C.longlong(len(payload)), pchar2, 0, C.ZcoOutbound, nil)
+
+			if bundleZco == 0 {
+				w.close <- true
+			}
+
+			if C.bp_send(xmitsap, C.CString(*dEid), nil, C.int(*ttl), pint2, 0, 0, 0, nil, bundleZco, nil) <= 0 {
+				w.close <- true
+			}
+
+			fmt.Println("BpSendRequest bottom")
+
+			safeSdr.mu.Unlock()
 		}
 	}
 }
@@ -197,8 +257,6 @@ func main() {
 
 	var xmitsap, recvsap C.BpSAP
 	var safeSdr SafeSdr
-
-	w := NewWatch()
 
 	err := BpAttach()
 	if err != nil {
@@ -219,13 +277,18 @@ func main() {
 
 	safeSdr.sdr = C.bp_get_sdr()
 
-	go BpReceiveResponse(recvsap, &safeSdr, w)
-	go BpSendRequest("blah", xmitsap, recvsap, &safeSdr, w)
+	go BpReceiveResponse(recvsap, &safeSdr, watcher)
+	go BpSendRequest("blah", xmitsap, recvsap, &safeSdr, watcher)
 
-	w.Start()
+	fmt.Println("1")
+
+	watcher.Start()
+
+	fmt.Println("1")
 
 	C.bp_close(xmitsap)
 	C.bp_close(recvsap)
 	BpDetach()
+	fmt.Println("BpDetach called")
 	C.free(unsafe.Pointer(cs))
 }
